@@ -1,423 +1,190 @@
 <?php
-/**
- * 图书馆预约系统 - PHP 后端
- * 启动方式: php -S localhost:8080 backend-php/router.php
- */
+// 图书馆预约系统 - PHP 后端
+// 启动: set MYSQL_ROOT_PASSWORD=xxx && php -S localhost:8080 -t . backend-php/router.php
 
-// ========== 数据库配置 ==========
-$DB_HOST = 'localhost';
-$DB_PORT = '3306';
-$DB_NAME = 'library_booking';
-$DB_USER = 'root';
-$DB_PASS = getenv('MYSQL_ROOT_PASSWORD') ?: '';
-
-// ========== PDO 连接 ==========
-function getDB(): PDO {
-    global $DB_HOST, $DB_PORT, $DB_NAME, $DB_USER, $DB_PASS;
-    static $pdo = null;
-    if ($pdo === null) {
-        $dsn = "mysql:host={$DB_HOST};port={$DB_PORT};dbname={$DB_NAME};charset=utf8mb4";
-        $pdo = new PDO($dsn, $DB_USER, $DB_PASS, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => false,
-        ]);
-    }
-    return $pdo;
-}
-
-// ========== CORS 与响应 ==========
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
+$DB = new PDO(
+    'mysql:host=localhost;port=3306;dbname=library_booking;charset=utf8mb4',
+    'root', getenv('MYSQL_ROOT_PASSWORD') ?: '',
+    [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
+);
 
-function jsonResponse($data, $code = 200) {
+function jsonOut($data, $code = 200) {
     http_response_code($code);
     header('Content-Type: application/json;charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit;
+    exit(json_encode($data, JSON_UNESCAPED_UNICODE));
 }
 
-function getJsonBody(): array {
-    $body = file_get_contents('php://input');
-    $data = json_decode($body, true);
-    return is_array($data) ? $data : [];
+function body() {
+    $d = json_decode(file_get_contents('php://input'), true);
+    return is_array($d) ? $d : [];
 }
 
-// ========== 路由 ==========
-$uri  = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$method = $_SERVER['REQUEST_METHOD'];
+$uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$m   = $_SERVER['REQUEST_METHOD'];
 
-// API 路由
-if ($uri === '/api/register' && $method === 'POST')       { handleRegister(); }
-elseif ($uri === '/api/login' && $method === 'POST')      { handleLogin(); }
-elseif ($uri === '/api/seats' && $method === 'GET')       { handleSeats(); }
-elseif ($uri === '/api/booking' && $method === 'POST')    { handleBooking(); }
-elseif ($uri === '/api/cancel' && $method === 'POST')     { handleCancel(); }
-elseif ($uri === '/api/updateBooking' && $method === 'POST') { handleUpdate(); }
-elseif ($uri === '/api/bookings' && $method === 'GET')    { handleBookings(); }
-else                                                       { serveStatic(); }
+// ── 路由 ──
+if     ($uri === '/api/register'     && $m === 'POST') { reg();   }
+elseif ($uri === '/api/login'        && $m === 'POST') { login(); }
+elseif ($uri === '/api/seats'        && $m === 'GET')  { seats(); }
+elseif ($uri === '/api/booking'      && $m === 'POST') { book();  }
+elseif ($uri === '/api/cancel'       && $m === 'POST') { cancel();}
+elseif ($uri === '/api/updateBooking'&& $m === 'POST') { update();}
+elseif ($uri === '/api/bookings'     && $m === 'GET')  { mybook();}
+else { serve(); }
 
-// ========== 1. 注册 ==========
-function handleRegister() {
-    $data = getJsonBody();
-    $studentId = $data['studentId'] ?? '';
-    $password  = $data['password'] ?? '';
-
-    if ($studentId === '' || $password === '') {
-        jsonResponse(['success' => false, 'message' => '学号和密码不能为空'], 400);
-    }
-
+// ── 注册 ──
+function reg() {
+    global $DB;
+    $d = body();
+    if (!$d['studentId'] || !$d['password']) jsonOut(['success'=>false,'message'=>'学号和密码不能为空'], 400);
     try {
-        $pdo = getDB();
-        $stmt = $pdo->prepare("INSERT INTO user (user_id, password) VALUES (?, ?)");
-        $stmt->execute([$studentId, $password]);
-        jsonResponse(['success' => true, 'message' => '注册成功']);
+        $DB->prepare("INSERT INTO user (user_id, password) VALUES (?,?)")->execute([$d['studentId'],$d['password']]);
+        jsonOut(['success'=>true,'message'=>'注册成功']);
     } catch (PDOException $e) {
-        if (strpos($e->getMessage(), 'Duplicate') !== false) {
-            jsonResponse(['success' => false, 'message' => '该学号已被注册']);
-        }
-        jsonResponse(['success' => false, 'message' => '数据库错误: ' . $e->getMessage()]);
+        jsonOut(['success'=>false,'message'=>strpos($e->getMessage(),'Duplicate')!==false?'该学号已被注册':'数据库错误']);
     }
 }
 
-// ========== 2. 登录 ==========
-function handleLogin() {
-    $data = getJsonBody();
-    $studentId = $data['studentId'] ?? '';
-    $password  = $data['password'] ?? '';
-
-    if ($studentId === '' || $password === '') {
-        jsonResponse(['success' => false, 'message' => '学号和密码不能为空'], 400);
-    }
-
-    try {
-        $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT password FROM user WHERE user_id = ?");
-        $stmt->execute([$studentId]);
-        $user = $stmt->fetch();
-
-        if (!$user) {
-            jsonResponse(['success' => false, 'message' => '当前用户不存在，请注册！']);
-        }
-        if ($user['password'] === $password) {
-            jsonResponse(['success' => true, 'message' => '登录成功，即将进入预约系统']);
-        } else {
-            jsonResponse(['success' => false, 'message' => '密码错误']);
-        }
-    } catch (PDOException $e) {
-        jsonResponse(['success' => false, 'message' => '数据库错误: ' . $e->getMessage()]);
-    }
+// ── 登录 ──
+function login() {
+    global $DB;
+    $d = body();
+    if (!$d['studentId'] || !$d['password']) jsonOut(['success'=>false,'message'=>'学号和密码不能为空'], 400);
+    $st = $DB->prepare("SELECT password FROM user WHERE user_id = ?");
+    $st->execute([$d['studentId']]);
+    $u = $st->fetch();
+    if (!$u)                       jsonOut(['success'=>false,'message'=>'当前用户不存在，请注册！']);
+    if ($u['password'] !== $d['password']) jsonOut(['success'=>false,'message'=>'密码错误']);
+    jsonOut(['success'=>true,'message'=>'登录成功，即将进入预约系统']);
 }
 
-// ========== 3. 查询座位 ==========
-function handleSeats() {
-    $floor  = $_GET['floor'] ?? '';
-    $date   = $_GET['date'] ?? '';
-    $slots  = $_GET['timeSlots'] ?? $_GET['timeSlot'] ?? '';
-
-    if ($floor === '' || $date === '' || $slots === '') {
-        jsonResponse([]);
+// ── 座位查询 ──
+function seats() {
+    global $DB;
+    $f = $_GET['floor'] ?? ''; $d = $_GET['date'] ?? ''; $ts = $_GET['timeSlots'] ?? $_GET['timeSlot'] ?? '';
+    if (!$f || !$d || !$ts) jsonOut([]);
+    $parts = array_values(array_filter(array_map('intval', explode(',', $ts))));
+    if (!$parts) jsonOut([]);
+    $ph = implode(',', array_fill(0, count($parts), '?'));
+    $params = array_merge([$d], $parts, [intval($f)]);
+    $st = $DB->prepare("SELECT id, floor, seat_type, seat_no,
+        EXISTS(SELECT 1 FROM booking b WHERE b.seat_id=s.id AND b.booking_date=? AND b.time_slot IN ($ph)) AS busy
+        FROM seat s WHERE floor=? AND is_active=1 ORDER BY seat_type, seat_no");
+    $st->execute($params);
+    $types = [1=>'研习位',2=>'大厅座位',3=>'单人研习间',4=>'四人研习舱',5=>'群组讨论室'];
+    $out = [];
+    while ($r = $st->fetch()) {
+        $tn = $types[$r['seat_type']] ?? '座位';
+        $out[] = ['seatId'=>(int)$r['id'],'floor'=>(int)$r['floor'],'seatType'=>(int)$r['seat_type'],
+            'seatNo'=>(int)$r['seat_no'],'label'=>"{$r['floor']}楼{$tn}{$r['seat_no']}",
+            'available'=>(int)!$r['busy']];
     }
-
-    $parts = array_filter(array_map('trim', explode(',', $slots)));
-    if (empty($parts)) {
-        jsonResponse([]);
-    }
-
-    $floorInt = intval($floor);
-    $placeholders = implode(',', array_fill(0, count($parts), '?'));
-
-    $sql = "SELECT s.id, s.floor, s.seat_type, s.seat_no,
-            CASE WHEN EXISTS(
-                SELECT 1 FROM booking b
-                WHERE b.seat_id = s.id AND b.booking_date = ? AND b.time_slot IN ($placeholders)
-            ) THEN 0 ELSE 1 END AS available
-            FROM seat s
-            WHERE s.floor = ? AND s.is_active = 1
-            ORDER BY s.seat_type, s.seat_no";
-
-    try {
-        $pdo = getDB();
-        $stmt = $pdo->prepare($sql);
-        $params = array_merge([$date], array_map('intval', $parts), [$floorInt]);
-        $stmt->execute($params);
-
-        $seats = [];
-        while ($row = $stmt->fetch()) {
-            $typeNames = [1 => '研习位', 2 => '大厅座位', 3 => '单人研习间', 4 => '四人研习舱', 5 => '群组讨论室'];
-            $type = intval($row['seat_type']);
-            $typeName = $typeNames[$type] ?? '座位';
-            $seatNo = intval($row['seat_no']);
-
-            $label = "{$row['floor']}楼{$typeName}{$seatNo}";
-            if ($seatNo === 0) $label = "{$row['floor']}楼座{$row['id']}";
-
-            $seats[] = [
-                'seatId'    => intval($row['id']),
-                'floor'     => intval($row['floor']),
-                'seatType'  => $type,
-                'seatNo'    => $seatNo,
-                'label'     => $label,
-                'available' => intval($row['available']),
-            ];
-        }
-        jsonResponse($seats);
-    } catch (PDOException $e) {
-        jsonResponse([]);
-    }
+    jsonOut($out);
 }
 
-// ========== 4. 提交预约 ==========
-function handleBooking() {
-    $data = getJsonBody();
-    $userName = $data['userName'] ?? '';
-    $userId   = $data['userId'] ?? '';
-    $phone    = $data['phone'] ?? '';
-    $seatId   = $data['seatId'] ?? '';
-    $date     = $data['date'] ?? '';
-    $slots    = $data['timeSlots'] ?? $data['timeSlot'] ?? '';
+// ── 提交预约 ──
+function book() {
+    global $DB;
+    $d = body();
+    $uid=$d['userId']??''; $uName=$d['userName']??''; $ph=$d['phone']??''; $sid=$d['seatId']??'';
+    $date=$d['date']??''; $ts=$d['timeSlots']??$d['timeSlot']??'';
+    if (!$uid||!$uName||!$ph||!$sid||!$date||!$ts) jsonOut(['success'=>false,'message'=>'请填写完整预约信息']);
+    if (!preg_match('/^\d{11}$/',$ph)) jsonOut(['success'=>false,'message'=>'电话号码格式不正确，需为11位数字']);
+    $parts = array_values(array_filter(array_map('intval', explode(',', $ts))));
+    if (!$parts) jsonOut(['success'=>false,'message'=>'请选择时间段']);
+    $ph2 = implode(',', array_fill(0, count($parts), '?'));
 
-    if ($userName === '' || $userId === '' || $phone === '' || $seatId === '' || $date === '' || $slots === '') {
-        jsonResponse(['success' => false, 'message' => '请填写完整预约信息']);
-    }
+    // 用户存在?
+    $st=$DB->prepare("SELECT 1 FROM user WHERE user_id=?"); $st->execute([$uid]);
+    if (!$st->fetch()) jsonOut(['success'=>false,'message'=>'用户不存在，请先登录或注册']);
 
-    if (!preg_match('/^\d{11}$/', $phone)) {
-        jsonResponse(['success' => false, 'message' => '电话号码格式不正确，需为11位数字']);
-    }
+    // 用户冲突
+    $st=$DB->prepare("SELECT COUNT(*) FROM booking WHERE user_id=? AND booking_date=? AND time_slot IN ($ph2)");
+    $st->execute(array_merge([$uid,$date],$parts));
+    if ($st->fetchColumn()>0) jsonOut(['success'=>false,'message'=>'同一用户同一时间段只可预约一个座位']);
 
-    $seat = intval($seatId);
-    $parts = array_filter(array_map('trim', explode(',', $slots)));
-    $slotInts = array_map('intval', $parts);
-    if (empty($slotInts)) {
-        jsonResponse(['success' => false, 'message' => '请选择时间段']);
-    }
+    // 座位冲突
+    $st=$DB->prepare("SELECT COUNT(*) FROM booking WHERE seat_id=? AND booking_date=? AND time_slot IN ($ph2)");
+    $st->execute(array_merge([intval($sid),$date],$parts));
+    if ($st->fetchColumn()>0) jsonOut(['success'=>false,'message'=>'该座位在所选时间段内已有预约']);
 
-    try {
-        $pdo = getDB();
-
-        // 检查用户是否存在
-        $stmt = $pdo->prepare("SELECT 1 FROM user WHERE user_id = ?");
-        $stmt->execute([$userId]);
-        if (!$stmt->fetch()) {
-            jsonResponse(['success' => false, 'message' => '用户不存在，请先登录或注册']);
-        }
-
-        // 检查用户冲突
-        $ph = implode(',', array_fill(0, count($slotInts), '?'));
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM booking WHERE user_id = ? AND booking_date = ? AND time_slot IN ($ph)");
-        $stmt->execute(array_merge([$userId, $date], $slotInts));
-        if ($stmt->fetchColumn() > 0) {
-            jsonResponse(['success' => false, 'message' => '同一用户同一时间段只可预约一个座位']);
-        }
-
-        // 检查座位冲突
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM booking WHERE seat_id = ? AND booking_date = ? AND time_slot IN ($ph)");
-        $stmt->execute(array_merge([$seat, $date], $slotInts));
-        if ($stmt->fetchColumn() > 0) {
-            jsonResponse(['success' => false, 'message' => '该座位在所选时间段内已有预约']);
-        }
-
-        // 插入预约
-        $pdo->beginTransaction();
-        $stmt = $pdo->prepare("INSERT INTO booking (user_name, user_id, phone, seat_id, booking_date, time_slot) VALUES (?, ?, ?, ?, ?, ?)");
-        foreach ($slotInts as $slot) {
-            $stmt->execute([$userName, $userId, $phone, $seat, $date, $slot]);
-        }
-        $pdo->commit();
-
-        jsonResponse(['success' => true, 'message' => '预约成功']);
-    } catch (PDOException $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
-        jsonResponse(['success' => false, 'message' => '数据库错误: ' . $e->getMessage()]);
-    }
+    $DB->beginTransaction();
+    $st=$DB->prepare("INSERT INTO booking (user_name,user_id,phone,seat_id,booking_date,time_slot) VALUES (?,?,?,?,?,?)");
+    foreach ($parts as $s) $st->execute([$uName,$uid,$ph,intval($sid),$date,$s]);
+    $DB->commit();
+    jsonOut(['success'=>true,'message'=>'预约成功']);
 }
 
-// ========== 5. 取消预约 ==========
-function handleCancel() {
-    $data = getJsonBody();
-    $bookingId = $data['bookingId'] ?? '';
-    $userId    = $data['userId'] ?? '';
-
-    if ($bookingId === '' || $userId === '') {
-        jsonResponse(['success' => false, 'message' => '参数不完整']);
-    }
-
-    try {
-        $pdo = getDB();
-
-        // 检查所有权
-        $stmt = $pdo->prepare("SELECT user_id FROM booking WHERE id = ?");
-        $stmt->execute([$bookingId]);
-        $booking = $stmt->fetch();
-
-        if (!$booking) {
-            jsonResponse(['success' => false, 'message' => '预约不存在或已被取消']);
-        }
-        if ($booking['user_id'] !== $userId) {
-            jsonResponse(['success' => false, 'message' => '无权限取消此预约']);
-        }
-
-        // 删除
-        $stmt = $pdo->prepare("DELETE FROM booking WHERE id = ?");
-        $stmt->execute([$bookingId]);
-        if ($stmt->rowCount() === 0) {
-            jsonResponse(['success' => false, 'message' => '取消失败']);
-        }
-
-        jsonResponse(['success' => true, 'message' => '取消成功']);
-    } catch (PDOException $e) {
-        jsonResponse(['success' => false, 'message' => '数据库错误: ' . $e->getMessage()]);
-    }
+// ── 取消预约 ──
+function cancel() {
+    global $DB;
+    $d = body(); $bid=$d['bookingId']??''; $uid=$d['userId']??'';
+    if (!$bid||!$uid) jsonOut(['success'=>false,'message'=>'参数不完整']);
+    $st=$DB->prepare("SELECT user_id FROM booking WHERE id=?"); $st->execute([$bid]);
+    if (!($r=$st->fetch())) jsonOut(['success'=>false,'message'=>'预约不存在或已被取消']);
+    if ($r['user_id']!==$uid) jsonOut(['success'=>false,'message'=>'无权限取消此预约']);
+    $DB->prepare("DELETE FROM booking WHERE id=?")->execute([$bid]);
+    jsonOut(['success'=>true,'message'=>'取消成功']);
 }
 
-// ========== 6. 修改预约 ==========
-function handleUpdate() {
-    $data = getJsonBody();
-    $bookingId = $data['bookingId'] ?? '';
-    $userId    = $data['userId'] ?? '';
-    $userName  = $data['userName'] ?? '';
-    $phone     = $data['phone'] ?? '';
-    $seatId    = $data['seatId'] ?? '';
-    $date      = $data['date'] ?? '';
-    $timeSlot  = $data['timeSlot'] ?? '';
+// ── 修改预约 ──
+function update() {
+    global $DB;
+    $d=body(); $bid=intval($d['bookingId']??0); $uid=$d['userId']??''; $un=$d['userName']??'';
+    $ph=$d['phone']??''; $sid=intval($d['seatId']??0); $date=$d['date']??''; $slot=intval($d['timeSlot']??0);
+    if (!$bid||!$uid||!$un||!$ph||!$sid||!$date||!$slot) jsonOut(['success'=>false,'message'=>'参数不完整']);
+    if (!preg_match('/^\d{11}$/',$ph)) jsonOut(['success'=>false,'message'=>'电话号码格式不正确，需为11位数字']);
 
-    if ($bookingId === '' || $userId === '' || $userName === '' || $phone === ''
-        || $seatId === '' || $date === '' || $timeSlot === '') {
-        jsonResponse(['success' => false, 'message' => '参数不完整']);
-    }
+    $st=$DB->prepare("SELECT user_id FROM booking WHERE id=?"); $st->execute([$bid]);
+    if (!($r=$st->fetch())) jsonOut(['success'=>false,'message'=>'预约不存在']);
+    if ($r['user_id']!==$uid) jsonOut(['success'=>false,'message'=>'无权限修改此预约']);
 
-    if (!preg_match('/^\d{11}$/', $phone)) {
-        jsonResponse(['success' => false, 'message' => '电话号码格式不正确，需为11位数字']);
-    }
+    $st=$DB->prepare("SELECT COUNT(*) FROM booking WHERE user_id=? AND booking_date=? AND time_slot=? AND id!=?");
+    $st->execute([$uid,$date,$slot,$bid]);
+    if ($st->fetchColumn()>0) jsonOut(['success'=>false,'message'=>'同一用户在该时间段已有其他预约']);
 
-    $bookingId = intval($bookingId);
-    $seat      = intval($seatId);
-    $slot      = intval($timeSlot);
+    $st=$DB->prepare("SELECT COUNT(*) FROM booking WHERE seat_id=? AND booking_date=? AND time_slot=? AND id!=?");
+    $st->execute([$sid,$date,$slot,$bid]);
+    if ($st->fetchColumn()>0) jsonOut(['success'=>false,'message'=>'该座位在所选时间段已被占用']);
 
-    try {
-        $pdo = getDB();
-
-        // 检查所有权
-        $stmt = $pdo->prepare("SELECT user_id FROM booking WHERE id = ?");
-        $stmt->execute([$bookingId]);
-        $row = $stmt->fetch();
-        if (!$row) {
-            jsonResponse(['success' => false, 'message' => '预约不存在']);
-        }
-        if ($row['user_id'] !== $userId) {
-            jsonResponse(['success' => false, 'message' => '无权限修改此预约']);
-        }
-
-        // 用户冲突
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM booking WHERE user_id = ? AND booking_date = ? AND time_slot = ? AND id != ?");
-        $stmt->execute([$userId, $date, $slot, $bookingId]);
-        if ($stmt->fetchColumn() > 0) {
-            jsonResponse(['success' => false, 'message' => '同一用户在该时间段已有其他预约']);
-        }
-
-        // 座位冲突
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM booking WHERE seat_id = ? AND booking_date = ? AND time_slot = ? AND id != ?");
-        $stmt->execute([$seat, $date, $slot, $bookingId]);
-        if ($stmt->fetchColumn() > 0) {
-            jsonResponse(['success' => false, 'message' => '该座位在所选时间段已被占用']);
-        }
-
-        // 更新
-        $stmt = $pdo->prepare("UPDATE booking SET user_name = ?, phone = ?, seat_id = ?, booking_date = ?, time_slot = ? WHERE id = ?");
-        $stmt->execute([$userName, $phone, $seat, $date, $slot, $bookingId]);
-
-        if ($stmt->rowCount() === 0) {
-            jsonResponse(['success' => false, 'message' => '修改失败']);
-        }
-
-        jsonResponse(['success' => true, 'message' => '修改成功']);
-    } catch (PDOException $e) {
-        jsonResponse(['success' => false, 'message' => '数据库错误: ' . $e->getMessage()]);
-    }
+    $DB->prepare("UPDATE booking SET user_name=?,phone=?,seat_id=?,booking_date=?,time_slot=? WHERE id=?")
+       ->execute([$un,$ph,$sid,$date,$slot,$bid]);
+    jsonOut(['success'=>true,'message'=>'修改成功']);
 }
 
-// ========== 7. 查询预约记录 ==========
-function handleBookings() {
-    $userId = $_GET['userId'] ?? '';
-
-    if ($userId === '') {
-        jsonResponse([]);
+// ── 我的预约 ──
+function mybook() {
+    global $DB;
+    $uid = $_GET['userId'] ?? '';
+    if (!$uid) jsonOut([]);
+    $st = $DB->prepare("SELECT b.id,b.user_name,b.phone,b.booking_date,b.time_slot,s.floor,s.id AS seat_id
+        FROM booking b JOIN seat s ON b.seat_id=s.id WHERE b.user_id=? ORDER BY b.booking_date DESC, b.time_slot");
+    $st->execute([$uid]);
+    $out = [];
+    while ($r = $st->fetch()) {
+        $out[] = ['bookingId'=>(int)$r['id'],'userName'=>$r['user_name'],'phone'=>$r['phone'],
+            'bookingDate'=>$r['booking_date'],'timeSlot'=>(int)$r['time_slot'],
+            'floor'=>(int)$r['floor'],'seatId'=>(int)$r['seat_id']];
     }
-
-    try {
-        $pdo = getDB();
-        $stmt = $pdo->prepare(
-            "SELECT b.id, b.user_name, b.phone, b.booking_date, b.time_slot, s.floor, s.id AS seat_id
-             FROM booking b
-             JOIN seat s ON b.seat_id = s.id
-             WHERE b.user_id = ?
-             ORDER BY b.booking_date DESC, b.time_slot"
-        );
-        $stmt->execute([$userId]);
-
-        $bookings = [];
-        while ($row = $stmt->fetch()) {
-            $bookings[] = [
-                'bookingId'   => intval($row['id']),
-                'userName'    => $row['user_name'],
-                'phone'       => $row['phone'],
-                'bookingDate' => $row['booking_date'],
-                'timeSlot'    => intval($row['time_slot']),
-                'floor'       => intval($row['floor']),
-                'seatId'      => intval($row['seat_id']),
-            ];
-        }
-        jsonResponse($bookings);
-    } catch (PDOException $e) {
-        jsonResponse([]);
-    }
+    jsonOut($out);
 }
 
-// ========== 8. 静态文件服务 ==========
-function serveStatic() {
+// ── 静态文件 ──
+function serve() {
     $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $base = realpath(__DIR__ . '/../frontend');
-
-    // 默认页面
-    if ($uri === '/' || $uri === '/index.html') {
-        $uri = '/login.html';
-    }
-
-    $filePath = realpath($base . $uri);
-
-    // 安全检查：防止目录遍历
-    if ($filePath === false || strpos($filePath, $base) !== 0 || !is_file($filePath)) {
-        http_response_code(404);
-        echo '404 Not Found';
-        exit;
-    }
-
-    // MIME 类型
-    $ext = pathinfo($filePath, PATHINFO_EXTENSION);
-    $mimes = [
-        'html' => 'text/html;charset=utf-8',
-        'css'  => 'text/css;charset=utf-8',
-        'js'   => 'application/javascript;charset=utf-8',
-        'json' => 'application/json',
-        'png'  => 'image/png',
-        'jpg'  => 'image/jpeg',
-        'ico'  => 'image/x-icon',
-    ];
-    $mime = $mimes[$ext] ?? 'application/octet-stream';
-
-    header("Content-Type: $mime");
-    readfile($filePath);
+    if ($uri === '/') $uri = '/login.html';
+    $fp = realpath($base . $uri);
+    if (!$fp || strpos($fp, $base) !== 0 || !is_file($fp)) { http_response_code(404); echo '404'; exit; }
+    $mimes = ['html'=>'text/html','css'=>'text/css','js'=>'application/javascript',
+        'json'=>'application/json','png'=>'image/png','jpg'=>'image/jpeg','ico'=>'image/x-icon'];
+    $ext = pathinfo($fp, PATHINFO_EXTENSION);
+    header('Content-Type: ' . ($mimes[$ext] ?? 'application/octet-stream') . ';charset=utf-8');
+    readfile($fp);
     exit;
-}
-
-// ===== 启动提示 =====
-// 仅在命令行直接运行时显示（非 HTTP 请求）
-if (php_sapi_name() === 'cli-server') {
-    // PHP built-in server mode - silent
 }
