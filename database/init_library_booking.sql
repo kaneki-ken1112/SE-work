@@ -53,14 +53,4 @@ CREATE TABLE IF NOT EXISTS booking (
     INDEX idx_seat_date (seat_id, booking_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='预约记录表';
 
--- ============================================
--- 表4: seat_availability — 座位余量表 (存7天)
--- ============================================
-CREATE TABLE IF NOT EXISTS seat_availability (
-    floor           TINYINT UNSIGNED NOT NULL COMMENT '楼层',
-    seat_date       DATE             NOT NULL COMMENT '日期',
-    time_slot       TINYINT UNSIGNED NOT NULL COMMENT '时间段(1=上午 2=下午 3=晚上)',
-    total_seats     INT UNSIGNED     NOT NULL DEFAULT 0 COMMENT '总座位数',
-    available_seats INT UNSIGNED     NOT NULL DEFAULT 0 COMMENT '剩余座位数',
-    PRIMARY KEY (floor, seat_date, time_slot)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='座位余量表(7天)';
+
