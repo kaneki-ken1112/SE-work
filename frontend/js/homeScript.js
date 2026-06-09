@@ -348,9 +348,6 @@ function startEditBooking(container, item) {
     const origHtml = container.innerHTML;
     const form = document.createElement('div');
     form.className = 'edit-form';
-    form.style.display = 'flex';
-    form.style.flexDirection = 'column';
-    form.style.gap = '6px';
 
     const nameInput = document.createElement('input');
     nameInput.value = item.userName || '';
@@ -451,8 +448,7 @@ function startEditBooking(container, item) {
     form.appendChild(loadBtn);
     form.appendChild(seatSelect);
     const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.gap = '8px';
+    actions.className = 'edit-actions';
     actions.appendChild(saveBtn);
     actions.appendChild(cancelBtn);
     form.appendChild(actions);

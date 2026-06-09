@@ -192,7 +192,7 @@ public class main {
             }
             rs.close();
 
-            if (seatCount == 600) {
+            if (seatCount == 608) {
                 return;
             }
 
@@ -858,5 +858,12 @@ public class main {
         System.out.println("后端服务器已启动 → http://localhost:" + PORT);
         System.out.println("注册接口: POST http://localhost:" + PORT + "/api/register");
         System.out.println("登录接口: POST http://localhost:" + PORT + "/api/login");
+
+        // 保持服务器运行
+        synchronized (main.class) {
+            try { main.class.wait(); }
+            catch (InterruptedException e) { System.out.println("服务已停止"); }
+        }
+        server.stop(0);
     }
 }

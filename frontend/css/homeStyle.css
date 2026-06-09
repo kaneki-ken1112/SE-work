@@ -101,16 +101,16 @@ header {
 .type-btn {
     padding: 10px 18px;
     border-radius: 999px;
-    border: 1px solid #c4b5fd;
-    background: #f8f4ff;
-    color: #5b21b6;
+    border: 1.5px solid #8b5cf6;
+    background: #c9b3f5;
+    color: #4c1d95;
     cursor: pointer;
     font-weight: 600;
     transition: all 0.2s ease;
 }
 .type-btn:hover:not(:disabled) {
-    background: #ede9fe;
-    border-color: #a78bfa;
+    background: #b490f2;
+    border-color: #7c3aed;
 }
 .type-btn:disabled {
     opacity: 0.6;
@@ -244,6 +244,43 @@ header {
 }
 .booking-item:last-child {
     border-bottom: none;
+}
+.edit-form {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 360px;
+}
+.edit-form input,
+.edit-form select {
+    padding: 10px 14px;
+    border: 1px solid #d6d9df;
+    border-radius: 8px;
+    background: #fbfcff;
+    font-size: 14px;
+    width: 100%;
+}
+.edit-form button {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #c4b5fd;
+    background: transparent;
+    color: #4c1d95;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 13px;
+    align-self: flex-start;
+}
+.edit-form button:hover {
+    background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+    color: #fff;
+    border-color: transparent;
+}
+.edit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
 }
 .booking-item div {
     margin-bottom: 6px;
