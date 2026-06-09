@@ -20,7 +20,9 @@ function jsonOut($data, $code = 200) {
 }
 
 function body() {
-    $d = json_decode(file_get_contents('php://input'), true);
+    $raw = file_get_contents('php://input');
+    if ($raw === false || $raw === '') return [];
+    $d = json_decode($raw, true);
     return is_array($d) ? $d : [];
 }
 
